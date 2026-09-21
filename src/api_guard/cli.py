@@ -50,6 +50,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     check.add_argument(
+        "--only",
+        default=None,
+        metavar="CHECK[,CHECK]",
+        help=(
+            "Run only these checks: freshness, breaking, conformance. The "
+            "post-deploy smoke test wants conformance alone — freshness was "
+            "already settled during the build, and re-asking it against a "
+            "deployed container is meaningless."
+        ),
+    )
+    check.add_argument(
         "--url",
         default=None,
         help=(
@@ -70,14 +81,35 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "check":
+        selected = None
+        if args.only is not None:
+            selected = {name.strip() for name in args.only.split(",") if name.strip()}
+            unknown = selected - ALL_CHECKS
+            if unknown:
+                parser.error(
+                    f"unknown check(s): {', '.join(sorted(unknown))}. "
+                    f"Choose from: {', '.join(sorted(ALL_CHECKS))}"
+                )
         return _run_check(
             args.config,
             generated_spec=args.generated_spec,
             url=args.url,
+            only=selected,
             explain=args.explain,
         )
     parser.error(f"unknown command {args.command}")
     return EXIT_TOOL_ERROR
+
+
+ALL_CHECKS = {freshness.NAME, breaking.NAME, conformance.NAME}
+
+
+def _skipped(name: str) -> CheckResult:
+    return CheckResult(
+        name=name,
+        status=Status.SKIPPED,
+        summary="not selected by --only",
+    )
 
 
 def _run_check(
@@ -85,6 +117,7 @@ def _run_check(
     *,
     generated_spec: Path | None,
     url: str | None,
+    only: set[str] | None,
     explain: bool,
 ) -> int:
     try:
@@ -117,7 +150,7 @@ def _run_check(
         print(f"api-guard: {exc}", file=sys.stderr)
         return EXIT_TOOL_ERROR
 
-    result = _check(config, waivers, generated=generated)
+    result = _check(config, waivers, generated=generated, only=only)
 
     if explain:
         _explain(result)
@@ -139,10 +172,19 @@ def _load_waivers(config: Config) -> list[Waiver]:
     return load_waivers(path)
 
 
-def _check(config: Config, waivers: list[Waiver], *, generated: bytes | None = None) -> RunResult:
+def _check(
+    config: Config,
+    waivers: list[Waiver],
+    *,
+    generated: bytes | None = None,
+    only: set[str] | None = None,
+) -> RunResult:
     checks: list[CheckResult] = []
     changes: list[Change] = []
     waiver_outcome = None
+
+    def wanted(name: str) -> bool:
+        return only is None or name in only
 
     spec_path = config.resolve(config.spec.path)
 
@@ -156,18 +198,51 @@ def _check(config: Config, waivers: list[Waiver], *, generated: bytes | None = N
             _meta(config),
         )
 
-    checks.append(
-        freshness.run(
-            revision,
-            generated=generated,
-            generate_cmd=config.spec.generate_cmd,
-            root=config.root,
+    if wanted(freshness.NAME):
+        checks.append(
+            freshness.run(
+                revision,
+                generated=generated,
+                generate_cmd=config.spec.generate_cmd,
+                root=config.root,
+            )
         )
-    )
+    else:
+        checks.append(_skipped(freshness.NAME))
 
+    if not wanted(breaking.NAME):
+        checks.append(_skipped(breaking.NAME))
+        base = None
+    else:
+        base = _resolve_base(config, spec_path, checks)
+
+    if base is not None:
+        result, changes, waiver_outcome = breaking.run(
+            base, revision, config.policy, waivers, config.root
+        )
+        checks.append(result)
+
+    if wanted(conformance.NAME):
+        checks.append(conformance.run(config.runtime, spec_path, config.root))
+    else:
+        checks.append(_skipped(conformance.NAME))
+
+    return decide(checks, changes, waiver_outcome or _empty_waivers(), _meta(config))
+
+
+def _resolve_base(config: Config, spec_path: Path, checks: list[CheckResult]) -> bytes | None:
+    """Fetch the previous contract, recording why if it cannot be had.
+
+    Returns None when there is nothing to compare against. Appends the
+    explanatory CheckResult itself, since "no base spec" and "base spec
+    unreadable" are a skip and an error respectively, and only this function
+    knows which happened.
+    """
     try:
-        base = specs.read_base(config.spec.base, spec_path, config.root)
+        return specs.read_base(config.spec.base, spec_path, config.root)
     except specs.BaseNotFound as exc:
+        # Nothing to compare against is not a failure: on a repository's first
+        # build there is no previous contract, so nothing can have broken.
         checks.append(
             CheckResult(
                 name=breaking.NAME,
@@ -176,22 +251,11 @@ def _check(config: Config, waivers: list[Waiver], *, generated: bytes | None = N
                 detail=str(exc),
             )
         )
-        base = None
     except specs.SpecError as exc:
         checks.append(
             CheckResult(name=breaking.NAME, status=Status.ERROR, summary=str(exc))
         )
-        base = None
-
-    if base is not None:
-        result, changes, waiver_outcome = breaking.run(
-            base, revision, config.policy, waivers, config.root
-        )
-        checks.append(result)
-
-    checks.append(conformance.run(config.runtime, spec_path, config.root))
-
-    return decide(checks, changes, waiver_outcome or _empty_waivers(), _meta(config))
+    return None
 
 
 def _empty_waivers():
