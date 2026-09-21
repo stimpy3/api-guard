@@ -37,7 +37,13 @@ COPY src/ ./src/
 # [cli] pulls in Schemathesis for the conformance check. The base install
 # deliberately omits it so a team that only wants breaking-change detection is
 # not made to carry a property-testing framework.
-RUN pip install --no-cache-dir ".[cli]" && rm -rf /root/.cache
+#
+# EXTRAS=cli,ai builds the :N-ai variant, which adds langchain and langgraph
+# for `--explain`. That is roughly a hundred megabytes of machine-learning
+# dependencies for a feature which by design cannot change a build result, so
+# the default image does without it.
+ARG EXTRAS=cli
+RUN pip install --no-cache-dir ".[${EXTRAS}]" && rm -rf /root/.cache
 
 # Where the caller's repository gets mounted.
 WORKDIR /work

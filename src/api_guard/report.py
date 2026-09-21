@@ -26,7 +26,19 @@ _ICON = {
 }
 
 
-def write(result: RunResult, out_dir: Path, formats: list[str]) -> dict[str, Path]:
+def write(
+    result: RunResult,
+    out_dir: Path,
+    formats: list[str],
+    *,
+    analysis: str | None = None,
+) -> dict[str, Path]:
+    """Write the reports. `analysis` is optional AI prose appended to markdown.
+
+    It is not written into result.json: that file is the machine-readable
+    record of what the deterministic checks found, and mixing generated prose
+    into it would let a downstream consumer mistake one for the other.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
 
@@ -37,7 +49,10 @@ def write(result: RunResult, out_dir: Path, formats: list[str]) -> dict[str, Pat
 
     if "markdown" in formats:
         path = out_dir / "report.md"
-        path.write_bytes(render_markdown(result).encode("utf-8"))
+        markdown = render_markdown(result)
+        if analysis:
+            markdown = f"{markdown}\n{analysis}"
+        path.write_bytes(markdown.encode("utf-8"))
         written["markdown"] = path
 
     if "junit" in formats:

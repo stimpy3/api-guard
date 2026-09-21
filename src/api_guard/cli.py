@@ -152,10 +152,13 @@ def _run_check(
 
     result = _check(config, waivers, generated=generated, only=only)
 
-    if explain:
-        _explain(result)
+    # Runs after the verdict, deliberately. The exit code below is already
+    # fixed by this point, whatever the model does or fails to do.
+    analysis = _explain(result) if explain else None
 
-    written = report.write(result, config.resolve(config.report.dir), config.report.formats)
+    written = report.write(
+        result, config.resolve(config.report.dir), config.report.formats, analysis=analysis
+    )
 
     _print_summary(result, written)
     return result.exit_code
@@ -280,12 +283,13 @@ def _meta(config: Config) -> dict[str, str]:
     return meta
 
 
-def _explain(result: RunResult) -> None:
-    """Attach the AI impact analysis, if the extra is installed.
+def _explain(result: RunResult) -> str | None:
+    """Ask the AI layer for an impact analysis, if it is installed.
 
-    Imported here rather than at module scope so the core gate has no dependency
-    on the AI layer, and so a missing extra degrades to a warning instead of
-    taking the build down.
+    Imported inside the function, not at module scope, so the core gate carries
+    no dependency on the AI layer and a missing extra degrades to a warning
+    rather than taking the build down. test_boundaries.py checks that this stays
+    true.
     """
     try:
         from api_guard.ai.explain import explain
@@ -294,12 +298,16 @@ def _explain(result: RunResult) -> None:
             "api-guard: --explain needs the AI extra: pip install 'api-guard[ai]'",
             file=sys.stderr,
         )
-        return
+        return None
 
-    try:
-        explain(result)
-    except Exception as exc:  # noqa: BLE001 - advisory only, must never fail the build
-        print(f"api-guard: explanation unavailable ({exc})", file=sys.stderr)
+    analysis = explain(result)
+    if analysis is None:
+        print(
+            "api-guard: no explanation produced (no GROQ_API_KEY, or the "
+            "provider was unavailable). The verdict above is unaffected.",
+            file=sys.stderr,
+        )
+    return analysis
 
 
 def _print_summary(result: RunResult, written: dict[str, Path]) -> None:
