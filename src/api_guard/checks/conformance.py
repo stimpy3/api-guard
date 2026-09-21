@@ -114,8 +114,14 @@ def run(runtime: RuntimeConfig | None, spec_path: Path, root: Path) -> CheckResu
             command += ["--seed", str(runtime.seed)]
 
         try:
+            # Run from the temp directory, not the project root. Schemathesis
+            # writes a .schemathesis/ cache into its working directory, and the
+            # working directory here is the caller's repository, mounted
+            # read-write. A checker that leaves droppings in the thing it is
+            # checking gets them committed by somebody eventually. The spec
+            # path is absolute, so nothing depends on the cwd.
             completed = subprocess.run(
-                command, cwd=root, capture_output=True, timeout=_TIMEOUT
+                command, cwd=tmp, capture_output=True, timeout=_TIMEOUT
             )
         except subprocess.TimeoutExpired:
             return CheckResult(
