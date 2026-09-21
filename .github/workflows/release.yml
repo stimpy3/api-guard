@@ -1,0 +1,106 @@
+# Release pipeline: build, prove, publish.
+#
+# Shape differs from sample-api's deployment pipeline on purpose. This one
+# produces a TOOL that other people depend on, so it is versioned with semver
+# and only runs on a tag. That pipeline produces a DEPLOYABLE, tagged by commit
+# SHA and built on every push.
+#
+# Tag a release:  git tag v1.0.1 && git push origin v1.0.1
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish, without the leading v (e.g. 1.0.1).
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]"
+      # oasdiff is absent here, so the integration tests skip. They run in the
+      # smoke job below, inside the image, which is where they matter.
+      - run: pytest -q
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            V="${{ inputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          if ! echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$V' is not semver. Consumers pin a major tag, so the shape matters."
+            exit 1
+          fi
+          echo "full=$V"                       >> "$GITHUB_OUTPUT"
+          echo "minor=$(echo "$V" | cut -d. -f1-2)" >> "$GITHUB_OUTPUT"
+          echo "major=$(echo "$V" | cut -d. -f1)"   >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: docker build -t api-guard:candidate .
+
+      # Never publish an image that has not been executed. Consumers pin :1 and
+      # inherit whatever is pushed, so a broken release is their broken build.
+      - name: Prove the built image works
+        run: |
+          docker build -t api-guard:candidate-test -f - . <<'EOF'
+          FROM api-guard:candidate
+          RUN pip install --no-cache-dir pytest
+          COPY tests/ /src/tests/
+          WORKDIR /src
+          EOF
+
+          echo "--- full suite, with real oasdiff on PATH ---"
+          docker run --rm --entrypoint python api-guard:candidate-test -m pytest tests -q
+
+          echo "--- end-to-end against the fixtures ---"
+          set +e
+          docker run --rm -v "$PWD/tests/fixtures/specs:/specs" \
+            --entrypoint oasdiff api-guard:candidate \
+            breaking /specs/base.yaml /specs/breaking-property-removed.yaml --fail-on ERR >/dev/null
+          [ $? -eq 1 ] || { echo "::error::breaking pair did not exit 1"; exit 1; }
+          docker run --rm -v "$PWD/tests/fixtures/specs:/specs" \
+            --entrypoint oasdiff api-guard:candidate \
+            breaking /specs/base.yaml /specs/safe-property-added.yaml --fail-on ERR >/dev/null
+          [ $? -eq 0 ] || { echo "::error::safe pair did not exit 0"; exit 1; }
+          set -e
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/api-guard
+        run: |
+          for tag in \
+            "${{ steps.version.outputs.full }}" \
+            "${{ steps.version.outputs.minor }}" \
+            "${{ steps.version.outputs.major }}" \
+            latest
+          do
+            docker tag api-guard:candidate "$IMAGE:$tag"
+            docker push "$IMAGE:$tag"
+          done

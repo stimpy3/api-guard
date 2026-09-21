@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]"
+      - name: Unit tests
+        run: pytest -q
+
+  test-in-image:
+    # The integration tests that pin oasdiff's behaviour only run where oasdiff
+    # exists. Skipping them quietly on the runner and never running them
+    # anywhere would leave the assumptions api-guard rests on unguarded.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t api-guard:ci .
+      - name: Full suite with real oasdiff
+        run: |
+          docker build -t api-guard:ci-test -f - . <<'EOF'
+          FROM api-guard:ci
+          RUN pip install --no-cache-dir pytest
+          COPY tests/ /src/tests/
+          WORKDIR /src
+          EOF
+          docker run --rm --entrypoint python api-guard:ci-test -m pytest tests -q

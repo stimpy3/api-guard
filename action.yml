@@ -1,0 +1,111 @@
+name: api-guard
+description: Block unacknowledged breaking changes to an OpenAPI contract.
+author: sohanbhadalkar
+
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  config:
+    description: Path to api-guard.yaml.
+    required: false
+    default: api-guard.yaml
+  generated-spec:
+    description: >
+      A spec your workflow already generated, to check the committed one against.
+      Generate it in a step that has your project's dependencies — this action
+      runs a published image that deliberately has none of them.
+    required: false
+    default: ''
+  url:
+    description: Override runtime.url (the running API to test against).
+    required: false
+    default: ''
+  only:
+    description: Comma-separated checks to run: freshness, breaking, conformance.
+    required: false
+    default: ''
+  version:
+    description: Image tag. Pin a major and get fixes without breaking changes.
+    required: false
+    default: '1'
+  comment:
+    description: Post the report as a pull request comment.
+    required: false
+    default: 'true'
+
+outputs:
+  verdict:
+    description: passed, failed or error.
+    value: ${{ steps.run.outputs.verdict }}
+  report:
+    description: Path to the markdown report.
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out depth
+      shell: bash
+      run: |
+        # spec.base defaults to git:origin/main, and a shallow clone has no
+        # origin/main. The failure surfaces as a confusing "no spec at
+        # origin/main", so say something useful about it up front.
+        if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+          echo "::warning::Shallow clone detected. api-guard compares against a git ref; use actions/checkout with fetch-depth: 0."
+          git fetch --unshallow --no-tags origin || true
+        fi
+        git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main || true
+
+    - name: Run api-guard
+      id: run
+      shell: bash
+      env:
+        AG_CONFIG: ${{ inputs.config }}
+        AG_GENERATED: ${{ inputs.generated-spec }}
+        AG_URL: ${{ inputs.url }}
+        AG_ONLY: ${{ inputs.only }}
+        AG_VERSION: ${{ inputs.version }}
+      run: |
+        args=(check --config "$AG_CONFIG")
+        [ -n "$AG_GENERATED" ] && args+=(--generated-spec "$AG_GENERATED")
+        [ -n "$AG_URL" ]       && args+=(--url "$AG_URL")
+        [ -n "$AG_ONLY" ]      && args+=(--only "$AG_ONLY")
+
+        set +e
+        docker run --rm --network host \
+          -v "$PWD:/work" -w /work \
+          "sohanbhadalkar/api-guard:${AG_VERSION}" "${args[@]}"
+        code=$?
+        set -e
+
+        case $code in
+          0) echo "verdict=passed" >> "$GITHUB_OUTPUT" ;;
+          1) echo "verdict=failed" >> "$GITHUB_OUTPUT" ;;
+          *) echo "verdict=error"  >> "$GITHUB_OUTPUT" ;;
+        esac
+        echo "report=api-guard-report/report.md" >> "$GITHUB_OUTPUT"
+
+        if [ -f api-guard-report/report.md ]; then
+          cat api-guard-report/report.md >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit $code
+
+    - name: Comment on the pull request
+      if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        [ -f api-guard-report/report.md ] || exit 0
+        gh pr comment "${{ github.event.number }}" --body-file api-guard-report/report.md || \
+          echo "::warning::Could not post the report as a comment (needs pull-requests: write)."
+
+    - name: Upload the report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-guard-report
+        path: api-guard-report/
+        if-no-files-found: ignore
