@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from api_guard import report, specs
-from api_guard.checks import breaking, freshness
+from api_guard.checks import breaking, conformance, freshness
 from api_guard.config import Config, ConfigError, load
 from api_guard.policy import PolicyError, Waiver, load_waivers
 from api_guard.results import Change, CheckResult, Status
@@ -50,6 +50,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     check.add_argument(
+        "--url",
+        default=None,
+        help=(
+            "Override runtime.url. The same config is used against the ephemeral "
+            "test stack during the build and against staging after deploying, and "
+            "those are different addresses."
+        ),
+    )
+    check.add_argument(
         "--explain",
         action="store_true",
         help=(
@@ -61,17 +70,38 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "check":
-        return _run_check(args.config, generated_spec=args.generated_spec, explain=args.explain)
+        return _run_check(
+            args.config,
+            generated_spec=args.generated_spec,
+            url=args.url,
+            explain=args.explain,
+        )
     parser.error(f"unknown command {args.command}")
     return EXIT_TOOL_ERROR
 
 
-def _run_check(config_path: Path, *, generated_spec: Path | None, explain: bool) -> int:
+def _run_check(
+    config_path: Path,
+    *,
+    generated_spec: Path | None,
+    url: str | None,
+    explain: bool,
+) -> int:
     try:
         config = load(config_path)
     except ConfigError as exc:
         print(f"api-guard: {exc}", file=sys.stderr)
         return EXIT_TOOL_ERROR
+
+    if url is not None:
+        if config.runtime is None:
+            print(
+                "api-guard: --url given but api-guard.yaml has no `runtime:` section, "
+                "so there is nothing to check against it.",
+                file=sys.stderr,
+            )
+            return EXIT_TOOL_ERROR
+        config.runtime.url = url
 
     generated: bytes | None = None
     if generated_spec is not None:
@@ -159,14 +189,7 @@ def _check(config: Config, waivers: list[Waiver], *, generated: bytes | None = N
         )
         checks.append(result)
 
-    if config.checks_conformance:
-        checks.append(
-            CheckResult(
-                name="conformance",
-                status=Status.SKIPPED,
-                summary="not implemented yet",
-            )
-        )
+    checks.append(conformance.run(config.runtime, spec_path, config.root))
 
     return decide(checks, changes, waiver_outcome or _empty_waivers(), _meta(config))
 

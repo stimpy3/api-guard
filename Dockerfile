@@ -34,7 +34,10 @@ COPY --from=oasdiff /usr/bin/oasdiff /usr/local/bin/oasdiff
 WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-RUN pip install --no-cache-dir . && rm -rf /root/.cache
+# [cli] pulls in Schemathesis for the conformance check. The base install
+# deliberately omits it so a team that only wants breaking-change detection is
+# not made to carry a property-testing framework.
+RUN pip install --no-cache-dir ".[cli]" && rm -rf /root/.cache
 
 # Where the caller's repository gets mounted.
 WORKDIR /work

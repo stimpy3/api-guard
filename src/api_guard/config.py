@@ -108,7 +108,20 @@ class RuntimeConfig(_Base):
     )
     max_examples: int = Field(default=50, ge=1, description="Test cases per operation.")
     wait_for_schema: int = Field(
-        default=30, ge=0, description="Seconds to wait for the API to come up."
+        default=30, ge=1, description="Seconds to wait for the API to come up."
+    )
+    deterministic: bool = Field(
+        default=True,
+        description=(
+            "Generate the same test cases every run. On by default because this "
+            "is a build gate: a failure that will not reproduce on a re-run is "
+            "worse than no check, since people learn to click 'retry' until it "
+            "goes green. Turn it off for exploratory fuzzing outside CI."
+        ),
+    )
+    seed: int | None = Field(
+        default=None,
+        description="Fixed random seed. Another way to make a run reproducible.",
     )
 
 
