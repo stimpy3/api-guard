@@ -1,0 +1,49 @@
+# `email` was deprecated with a sunset date that has already passed, and
+# /legacy likewise. Removing either in the revision honoured the promise made
+# to consumers, so oasdiff should NOT report those removals as breaking.
+#
+# This is Tier 1 of the change policy: evolve the API without filing an
+# exception.
+openapi: 3.0.3
+info:
+  title: Fixture API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+  /legacy:
+    get:
+      operationId: legacy
+      deprecated: true
+      x-sunset: '2026-01-01'
+      responses:
+        '200':
+          description: Deprecated endpoint.
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          deprecated: true
+          x-sunset: '2026-01-01'

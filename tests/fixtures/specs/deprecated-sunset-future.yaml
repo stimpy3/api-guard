@@ -1,0 +1,46 @@
+# Same as deprecated-sunset-past.yaml but the sunset dates are still in the
+# future. Removing these in the revision breaks the promise early, so oasdiff
+# SHOULD report it — deprecating something is not a licence to delete it today.
+openapi: 3.0.3
+info:
+  title: Fixture API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+  /legacy:
+    get:
+      operationId: legacy
+      deprecated: true
+      x-sunset: '2027-06-01'
+      responses:
+        '200':
+          description: Deprecated endpoint.
+          content:
+            application/json:
+              schema:
+                type: object
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          deprecated: true
+          x-sunset: '2027-06-01'

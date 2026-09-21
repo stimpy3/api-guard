@@ -1,0 +1,37 @@
+# Variant of deprecated-sunset-past.yaml where `email` has ALSO been demoted
+# from required to optional before removal.
+#
+# Probing whether the proper two-step retirement of a response FIELD (make
+# optional, then remove after sunset) is treated differently from deleting a
+# required one outright.
+openapi: 3.0.3
+info:
+  title: Fixture API
+  version: 1.0.0
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          deprecated: true
+          x-sunset: '2026-01-01'

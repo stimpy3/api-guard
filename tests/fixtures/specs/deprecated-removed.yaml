@@ -1,0 +1,30 @@
+# The follow-up release: the deprecated `email` property and the deprecated
+# /legacy endpoint are both gone. Whether this is breaking depends entirely on
+# whether the sunset date in the BASE spec had passed.
+openapi: 3.0.3
+info:
+  title: Fixture API
+  version: 2.0.0
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string

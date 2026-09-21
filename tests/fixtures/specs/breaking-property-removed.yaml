@@ -1,0 +1,31 @@
+# `email` removed outright, with no deprecation notice. This is the change the
+# gate exists to catch: consumers reading user.email get undefined.
+openapi: 3.0.3
+info:
+  title: Fixture API
+  version: 2.0.0
+paths:
+  /users:
+    get:
+      operationId: listUsers
+      responses:
+        '200':
+          description: All users.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+components:
+  schemas:
+    User:
+      type: object
+      required: [id, name, phone]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        phone:
+          type: string

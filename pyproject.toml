@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "api-guard"
+version = "0.1.0"
+description = "Block unacknowledged breaking changes to an OpenAPI contract in CI."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+# Schemathesis is only needed for the runtime conformance check. Keeping it out
+# of the base install means a team that only wants breaking-change detection
+# does not pull in a property-testing framework.
+cli = [
+    "schemathesis>=4,<5",
+]
+# The AI layer is deliberately separate: the core gate must run with no API key,
+# no network to an LLM provider, and no extra dependencies.
+ai = [
+    "langchain-groq>=0.2",
+    "langchain-core>=0.3",
+    "langgraph>=0.2",
+    "mcp>=1.2",
+]
+dev = [
+    "pytest>=8",
+]
+
+[project.scripts]
+api-guard = "api_guard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
